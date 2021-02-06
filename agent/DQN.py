@@ -143,4 +143,20 @@ class DQN:
             save_path
         )
         print("MarioNet saved to {0} at step {1}".format(save_path,self.cur_step))
+
+
+    def load(self, load_path):
+        if not os.path.exists(load_path):
+            raise ValueError(f"{load_path} not Exist")
+        
+        ckp = torch.load(load_path,map_location=self.device)
+        exploration_rate = ckp.get('exploration_rate')
+        online_net = ckp.get('online_net')
+        target_net =ckp.get('target_net')
+
+        self.online_net.load_state_dict(online_net)
+        self.target_net.load_state_dict(target_net)
+        self.exploartion_rate = exploration_rate
+
+        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
     

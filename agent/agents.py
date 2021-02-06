@@ -11,6 +11,7 @@ def get_agent(args,env):
     m_size = args.memory_size
     b_size = args.batch_size
     loss_type = args.loss_type
+    mem_type = args.memory_type
 
     save_dir = args.save_dir
     if not os.path.isdir(save_dir):
@@ -23,6 +24,7 @@ def get_agent(args,env):
 
     elif args.agent == "doubleDQN":
         
-        agent = doubleDQN(state_dim=s_dim,action_dim=a_dim)
+        agent = doubleDQN(state_dim=s_dim,action_dim=a_dim, save_dir=save_dir,
+                           memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type)
     
     return agent

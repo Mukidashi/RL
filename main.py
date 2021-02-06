@@ -18,9 +18,11 @@ def set_parser():
     
     parser.add_argument('--agent',choices=['DQN','doubleDQN'],required=True)
     parser.add_argument('--memory_size',type=int, default=100000)
+    parser.add_argument('--memory_type', choices=['uniform','prioritized'], default='uniform')
     parser.add_argument('--batch_size',type=int, default=32)
     parser.add_argument('--loss_type',choices=['MSE','SmoothL1'],default="MSE")
 
+    parser.add_argument('--episode_num',type=int,default=40000)
     parser.add_argument('--save_dir',type=str, default="./checkpoints/{0}".format(datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')))
 
     return parser
@@ -48,7 +50,8 @@ import torch
 logger = Logger(args.save_dir)
 
 action_num = env.action_space.n
-for i in range(40000):
+episode_num = args.episode_num
+for i in range(episode_num):
     
     state = env.reset()
 
@@ -78,6 +81,9 @@ for i in range(40000):
 
         if done or info['flag_get']:
             break
+
+    if args.memory_type == 'prioritized':
+        agent.anneal_IS_beta(float(i)/float(episode_num))
 
     logger.log_episode()
     

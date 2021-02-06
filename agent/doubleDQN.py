@@ -2,17 +2,35 @@ import torch
 import numpy as np
 import os
 
-from memory import ReplayMemory
+
+from memory import ReplayMemory, PrioritizedReplayMemory
 from network import MarioNet
+
+def weighted_MSE_Loss(x,y,w):
+    loss = w*((x-y)**2)
+    return torch.mean(loss)
 
 class doubleDQN:
 
-    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,batch_size=32,loss_type="MSE"):
+    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,memory_type='uniform',
+                 batch_size=32,loss_type="MSE"):
+        
         self.state_dim = state_dim
         self.action_dim = action_dim
 
         self.batch_size = batch_size
-        self.memory = ReplayMemory(memory_size, batch_size=self.batch_size)
+        self.memory_type = memory_type
+        if memory_type == 'prioritized':
+            self.memory =  PrioritizedReplayMemory(memory_size,batch_size=self.batch_size)
+        else:
+            self.memory = ReplayMemory(memory_size, batch_size=self.batch_size)
+
+        if memory_type == 'prioritized':
+            self.sort_memory_every = memory_size
+            self.sample_idx = None
+            self.sample_prob = None
+            self.beta_zero = 0.5
+            self.beta = self.beta_zero
 
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
@@ -27,6 +45,10 @@ class doubleDQN:
             self.loss_fn = torch.nn.SmoothL1Loss()
         else:
             self.loss_fn = torch.nn.MSELoss()
+
+        if memory_type == 'prioritized':
+            #for now, only one function is implemented for prioritized replay
+            self.loss_fn = weighted_MSE_Loss
 
         
         self.exploration_rate = 1
@@ -69,11 +91,18 @@ class doubleDQN:
         reward = torch.DoubleTensor([reward])
         done = torch.BoolTensor([done])
 
-        self.memory.append((state, next_state, action, reward, done,))
+        if self.memory_type == "prioritized":
+            max_priority = self.memory.get_max_priority()
+            self.memory.append((state, next_state, action, reward, done,),max_priority)
+        else:
+            self.memory.append((state, next_state, action, reward, done,))
 
 
     def recall(self):
-        batch = self.memory.sample()
+        if self.memory_type == "prioritized":
+            batch, self.sample_idx, self.sample_prob = self.memory.sample()
+        else:
+            batch = self.memory.sample()
         state, next_state, action, reward, done = map(torch.stack, zip(*batch))
 
         state = state.to(self.device)
@@ -90,13 +119,28 @@ class doubleDQN:
         td_est = self.online_net(state)[np.arange(0, self.batch_size), action]
 
         with torch.no_grad():
-            next_state_value = torch.max(self.target_net(next_state),1)[0]
+            max_action_id = torch.argmax(self.online_net(next_state),axis=1)
+            next_state_value = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
             td_tgt = (reward + (1.0 - done.float())*self.gamma*next_state_value).float()
 
-        loss = self.loss_fn(td_est, td_tgt)
+        if self.memory_type == 'prioritized':
+            td_error = td_est - td_tgt
+            td_abs_error = np.abs(td_error.view(self.batch_size).to('cpu').detach().numpy().copy())
+            self.memory.update_heap_value(self.sample_idx,td_abs_error)
+
+            wei = np.power(np.reciprocal(np.array(self.sample_prob)),self.beta)
+            wei = wei/np.amax(wei)
+            wei = torch.FloatTensor(wei).to(self.device)
+
+            loss = self.loss_fn(td_est, td_tgt, wei)
+
+        else:
+            loss = self.loss_fn(td_est, td_tgt)
+
 
         self.optimizer.zero_grad()
         loss.backward()
+            
         self.optimizer.step()
 
         return loss.item(), td_est.mean().item()
@@ -119,6 +163,9 @@ class doubleDQN:
         if self.memory.get_size() < self.mem_size_min:
             return None, None
 
+        if self.memory_type == "prioritized" and self.cur_step % self.sort_memory_every == 0:
+            self.memory.sort_memory()
+
         if self.cur_step % self.learn_every != 0:
             return None, None
 
@@ -137,10 +184,33 @@ class doubleDQN:
         torch.save(
             dict(
                 online_net=self.online_net.state_dict(),
-                target_net=self.target_net.state_dict(),
-                exploration_rate=self.exploration_rate
+                exploration_rate=self.exploration_rate,
+                is_beta=self.beta
             ),
             save_path
         )
         print("MarioNet saved to {0} at step {1}".format(save_path,self.cur_step))
+
+
+    def load(self, load_path):
+        if not os.path.exists(load_path):
+            raise ValueError(f"{load_path} not Exist")
+        
+        ckp = torch.load(load_path,map_location=self.device)
+        exploration_rate = ckp.get('exploration_rate')
+        online_net = ckp.get('online_net')
+        is_beta = ckp.get('is_beta')
+
+        self.online_net.load_state_dict(online_net)
+        self.target_net.load_state_dict(online_net)
+        self.exploartion_rate = exploration_rate
+        self.beta = is_beta
+
+        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
+
+
+    def anneal_IS_beta(self, ratio):
+        ratio = np.clip(ratio,0.0,1.0)
+        self.beta = (1.0-self.beta_zero)*ratio + self.beta_zero
+        
     
