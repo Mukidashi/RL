@@ -137,7 +137,7 @@ class DQN:
         torch.save(
             dict(
                 online_net=self.online_net.state_dict(),
-                target_net=self.target_net.state_dict(),
+                # target_net=self.target_net.state_dict(),
                 exploration_rate=self.exploration_rate
             ),
             save_path
@@ -152,10 +152,11 @@ class DQN:
         ckp = torch.load(load_path,map_location=self.device)
         exploration_rate = ckp.get('exploration_rate')
         online_net = ckp.get('online_net')
-        target_net =ckp.get('target_net')
+        # target_net =ckp.get('target_net')
 
         self.online_net.load_state_dict(online_net)
-        self.target_net.load_state_dict(target_net)
+        # self.target_net.load_state_dict(target_net)
+        self.target_net.load_state_dict(online_net)
         self.exploartion_rate = exploration_rate
 
         print(f"Loading model at {load_path} with exploration rate {exploration_rate}")

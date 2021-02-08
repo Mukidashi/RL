@@ -39,7 +39,7 @@ class doubleDQN:
         self.target_net = MarioNet(state_dim,action_dim).to(self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
 
-        self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=0.00025)
+        self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=0.00025/4.0)
 
         if loss_type == "SmoothL1":
             self.loss_fn = torch.nn.SmoothL1Loss()
@@ -52,9 +52,10 @@ class doubleDQN:
 
         
         self.exploration_rate = 1
-        self.exploration_rate_decay = 0.99999975
+        # self.exploration_rate_decay = 0.99999975
+        self.exploration_rate_step = 0.9/1000000.0
         self.exploration_rate_min = 0.1
-        self.gamma = 0.9
+        self.gamma = 0.99
 
         self.learn_every = 3
         self.sync_every = 1e4
@@ -75,7 +76,8 @@ class doubleDQN:
             action_values = self.online_net(state)
             action_idx = torch.argmax(action_values,axis=1).item()
 
-        self.exploration_rate *= self.exploration_rate_decay
+        # self.exploration_rate *= self.exploration_rate_decay
+        self.exploration_rate -= self.exploration_rate_step
         self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
 
         self.cur_step += 1
@@ -140,7 +142,6 @@ class doubleDQN:
 
         self.optimizer.zero_grad()
         loss.backward()
-            
         self.optimizer.step()
 
         return loss.item(), td_est.mean().item()
