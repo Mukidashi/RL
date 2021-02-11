@@ -16,7 +16,7 @@ def set_parser():
     parser.add_argument('proc_type',choices=['train','evaluate'],default='train')
     parser.add_argument('--env', choices=['cart','mario'], required=True)
     
-    parser.add_argument('--agent',choices=['DQN','doubleDQN'],required=True)
+    parser.add_argument('--agent',choices=['DQN','doubleDQN','duelingDQN','noisyDuelDQN'],required=True)
     parser.add_argument('--memory_size',type=int, default=100000)
     parser.add_argument('--memory_type', choices=['uniform','prioritized'], default='uniform')
     parser.add_argument('--batch_size',type=int, default=32)
@@ -55,10 +55,6 @@ for i in range(episode_num):
     
     state = env.reset()
 
-    # iterN = 0
-    # reward_sum = 0.0
-    # loss_sum = 0.0
-    # loss_cnt = 0
     while True:
 
         # action = np.random.randint(action_num)
@@ -71,23 +67,14 @@ for i in range(episode_num):
         screen = env.render()
 
         state = next_state
-         
-        # if loss:
-        #     loss_sum += loss
-        # reward_sum += reward
-        # iterN += 1
 
         logger.log_step(reward,loss,q)
 
         if done or info['flag_get']:
             break
 
-    if args.memory_type == 'prioritized':
-        agent.anneal_IS_beta(float(i)/float(episode_num))
-
     logger.log_episode()
     
-    # print("Episode{0}-->iter:{1} loss:{2} reward:{3}".format(i,iterN,loss_sum/float(iterN),reward_sum))
 
     if i%20 == 0:
         logger.record(episode=i,

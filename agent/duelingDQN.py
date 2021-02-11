@@ -3,17 +3,17 @@ import numpy as np
 import os
 
 
-from memory import ReplayMemory, PrioritizedReplayMemory, PrioritizedReplayMemoryProportional
-from network import MarioNet
+from memory import ReplayMemory, PrioritizedReplayMemoryProportional
+from network import MarioDuelNet, MarioNoisyDuelNet
 
 def weighted_MSE_Loss(x,y,w):
     loss = w*((x-y)**2)
     return torch.mean(loss)
 
-class doubleDQN:
+class duelingDQN:
 
     def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,memory_type='uniform',
-                 batch_size=32,loss_type="MSE"):
+                 batch_size=32, loss_type="MSE", use_noisy=False):
         
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -21,7 +21,6 @@ class doubleDQN:
         self.batch_size = batch_size
         self.memory_type = memory_type
         if memory_type == 'prioritized':
-            # self.memory =  PrioritizedReplayMemory(memory_size,batch_size=self.batch_size)
             self.memory = PrioritizedReplayMemoryProportional(memory_size, batch_size=self.batch_size)
         else:
             self.memory = ReplayMemory(memory_size, batch_size=self.batch_size)
@@ -30,17 +29,22 @@ class doubleDQN:
             # self.sort_memory_every = memory_size
             self.sample_idx = None
             self.sample_prob = None
-            # self.beta_zero = 0.5
             self.beta_zero = 0.4
             self.beta = self.beta_zero
             self.anneal_IS_every = 100000
-            self.anneal_IS_step = (1.0-self.beta_zero)/200.0
+            self.anneal_IS_step = (1.0-self.beta_zero)/100.0
 
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
         
-        self.online_net = MarioNet(state_dim,action_dim).to(self.device)
-        self.target_net = MarioNet(state_dim,action_dim).to(self.device)
+
+        self.use_noisy = use_noisy
+        if use_noisy:
+            self.online_net = MarioNoisyDuelNet(state_dim, action_dim).to(self.device)
+            self.target_net = MarioNoisyDuelNet(state_dim, action_dim).to(self.device)
+        else:
+            self.online_net = MarioDuelNet(state_dim,action_dim).to(self.device)
+            self.target_net = MarioDuelNet(state_dim,action_dim).to(self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
 
         self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=0.00025/4.0)
@@ -61,6 +65,9 @@ class doubleDQN:
         self.exploration_rate_min = 0.1
         self.gamma = 0.9
 
+        if self.use_noisy:
+            self.exploration_rate = -1
+
         self.learn_every = 3
         self.sync_every = 1e4
         self.mem_size_min = memory_size/2
@@ -72,17 +79,22 @@ class doubleDQN:
 
     def act(self, state):
 
+        if self.use_noisy:
+            self.online_net.sample_noise()
+
+        #epsilon-greedy (if model is noisy, never select random policy)
         if np.random.rand() < self.exploration_rate:
             action_idx = np.random.randint(self.action_dim)
         else:
             state = torch.FloatTensor(state).to(self.device)
             state = state.unsqueeze(0)
-            action_values = self.online_net(state)
+            action_values = self._convert_duel_output_to_Qvalue(self.online_net(state))
             action_idx = torch.argmax(action_values,axis=1).item()
 
-        # self.exploration_rate *= self.exploration_rate_decay
-        self.exploration_rate -= self.exploration_rate_step
-        self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
+        if not self.use_noisy:
+            # self.exploration_rate *= self.exploration_rate_decay
+            self.exploration_rate -= self.exploration_rate_step
+            self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
 
         self.cur_step += 1
 
@@ -121,13 +133,25 @@ class doubleDQN:
 
         
     def update(self, state, next_state, action, reward, done):
-        
-        td_est = self.online_net(state)[np.arange(0, self.batch_size), action]
 
         with torch.no_grad():
-            max_action_id = torch.argmax(self.online_net(next_state),axis=1)
-            next_state_value = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
+            if self.use_noisy:
+                self.online_net.sample_noise()
+                self.target_net.sample_noise()
+
+            q_next_est = self._convert_duel_output_to_Qvalue(self.online_net(next_state))
+            max_action_id = torch.argmax(q_next_est, axis=1)
+            q_next_tgt = self._convert_duel_output_to_Qvalue(self.target_net(next_state))
+            next_state_value = q_next_tgt[np.arange(0, self.batch_size),max_action_id]
             td_tgt = (reward + (1.0 - done.float())*self.gamma*next_state_value).float()
+
+
+        if self.use_noisy:
+            self.online_net.sample_noise()
+
+        q_est = self._convert_duel_output_to_Qvalue(self.online_net(state))
+        td_est = q_est[np.arange(0, self.batch_size), action]
+
 
         if self.memory_type == 'prioritized':
             td_error = td_est - td_tgt
@@ -221,7 +245,12 @@ class doubleDQN:
         if self.beta <= 1.0:
             self.beta += self.anneal_IS_step
         print("Aneal IS beta:{0}".format(self.beta))
-        # ratio = np.clip(ratio,0.0,1.0)
-        # self.beta = (1.0-self.beta_zero)*ratio + self.beta_zero
+
+
+    def _convert_duel_output_to_Qvalue(self,output):
+        value, advantage = output
+        advantage_mean = torch.mean(advantage,1,True)
+        qvalue = value.repeat((1,self.action_dim)) + advantage - advantage_mean.repeat((1,self.action_dim))
+        return qvalue
         
     

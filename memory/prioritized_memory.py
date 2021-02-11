@@ -93,7 +93,7 @@ class PrioritizedReplayMemory():
                     break
 
 
-    def update_heap_value(self, idxs, vals):
+    def update_priorities(self, idxs, vals):
 
         for i in range(len(idxs)):
             idx = idxs[i]

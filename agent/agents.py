@@ -1,5 +1,6 @@
 from .DQN import DQN
 from .doubleDQN import doubleDQN
+from .duelingDQN import duelingDQN
 
 import os
 
@@ -24,7 +25,17 @@ def get_agent(args,env):
 
     elif args.agent == "doubleDQN":
         
-        agent = doubleDQN(state_dim=s_dim,action_dim=a_dim, save_dir=save_dir,
+        agent = doubleDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
                            memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type)
+
+    elif args.agent == "duelingDQN" or args.agent == "noisyDuelDQN":
+
+        use_noisy = False
+        if args.agent == "noisyDuelDQN":
+            use_noisy = True
+        
+        agent = duelingDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
+                           memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type,
+                           use_noisy=use_noisy) 
     
     return agent

@@ -54,6 +54,10 @@ class PrioritizedReplayMemoryProportional():
         return samples, sample_idx, sample_prob
     
 
+    def get_size(self):
+        return len(self.memory)
+
+
     def get_max_priority(self):
         return self.max_priority
 
