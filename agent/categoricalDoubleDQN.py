@@ -4,16 +4,20 @@ import os
 
 
 from memory import ReplayMemory, PrioritizedReplayMemory, PrioritizedReplayMemoryProportional
-from network import MarioNet
+from network import MarioCategoricalNet
 
-def weighted_MSE_Loss(x,y,w):
-    loss = w*((x-y)**2)
-    return torch.mean(loss)
+def CE_loss(x,y):
+    loss = -x*torch.log(y+1.0e-8)
+    return torch.sum(loss, 1)
 
-class doubleDQN:
+def weighted_CE_loss(x, y, w):
+    loss = -x*torch.log(y+1.0e-8)
+    return w*torch.sum(loss,1)
+
+class categoricalDoubleDQN:
 
     def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,memory_type='uniform',
-                 batch_size=32,loss_type="MSE", proc_type="train"):
+                 batch_size=32,loss_type="MSE"):
         
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -21,49 +25,48 @@ class doubleDQN:
         self.batch_size = batch_size
         self.memory_type = memory_type
         if memory_type == 'prioritized':
-            # self.memory =  PrioritizedReplayMemory(memory_size,batch_size=self.batch_size)
-            self.memory = PrioritizedReplayMemoryProportional(memory_size, batch_size=self.batch_size)
+            self.memory = PrioritizedReplayMemoryProportional(memory_size, batch_size=self.batch_size, priority_alpha=0.5)
         else:
             self.memory = ReplayMemory(memory_size, batch_size=self.batch_size)
 
         if memory_type == 'prioritized':
-            # self.sort_memory_every = memory_size
             self.sample_idx = None
             self.sample_prob = None
-            # self.beta_zero = 0.5
             self.beta_zero = 0.4
             self.beta = self.beta_zero
             self.anneal_IS_every = 100000
             self.anneal_IS_step = (1.0-self.beta_zero)/200.0
 
+
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
         
-        self.online_net = MarioNet(state_dim,action_dim).to(self.device)
-        self.target_net = MarioNet(state_dim,action_dim).to(self.device)
+        self.atom_num = 51
+        self.online_net = MarioCategoricalNet(state_dim, action_dim, self.atom_num).to(self.device)
+        self.target_net = MarioCategoricalNet(state_dim, action_dim, self.atom_num).to(self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
+        self.Vmin = 0.0
+        self.Vmax = 100.0
+        self.atoms = np.zeros(self.atom_num)
+        self.deltaz = (self.Vmax-self.Vmin)/float(self.atom_num-1)
+        for i in range(self.atom_num):
+            self.atoms[i] = self.Vmin + float(i)*self.deltaz
+
 
         self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=0.00025/4.0)
 
-        if loss_type == "SmoothL1":
-            self.loss_fn = torch.nn.SmoothL1Loss()
-        else:
-            self.loss_fn = torch.nn.MSELoss()
 
         if memory_type == 'prioritized':
             #for now, only one function is implemented for prioritized replay
-            self.loss_fn = weighted_MSE_Loss
+            self.loss_fn = weighted_CE_loss
+        else:
+            self.loss_fn = CE_loss
 
         
         self.exploration_rate = 1
-        # self.exploration_rate_decay = 0.99999975
         self.exploration_rate_step = 0.9/4500000.0
         self.exploration_rate_min = 0.1
         self.gamma = 0.9
-
-        if proc_type == "evaluate":
-            self.exploration_rate = 0.05
-            self.exploration_rate_min = 0.05
 
         self.learn_every = 3
         self.sync_every = 1e4
@@ -81,7 +84,7 @@ class doubleDQN:
         else:
             state = torch.FloatTensor(state).to(self.device)
             state = state.unsqueeze(0)
-            action_values = self.online_net(state)
+            action_values = self._convert_categorical_output_to_Qvalue(self.online_net(state))
             action_idx = torch.argmax(action_values,axis=1).item()
 
         # self.exploration_rate *= self.exploration_rate_decay
@@ -125,34 +128,53 @@ class doubleDQN:
 
         
     def update(self, state, next_state, action, reward, done):
-        
-        td_est = self.online_net(state)[np.arange(0, self.batch_size), action]
 
+        # td_dist = np.zeros(self.batch_size, self.atom_num)
+        # zsupp = np.array([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)])
+
+        
         with torch.no_grad():
-            max_action_id = torch.argmax(self.online_net(next_state),axis=1)
-            next_state_value = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
-            td_tgt = (reward + (1.0 - done.float())*self.gamma*next_state_value).float()
+            #project updated support
+            zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
+            Tz = reward.view(-1,1).repeat(1,self.atom_num) + self.gamma*zsupp.view(1,-1).repeat(self.batch_size,1)
+            Tz = torch.clip(Tz, self.Vmin, self.Vmax)
+            Tz_n = (Tz-self.Vmin)/float(self.deltaz)
+            Tz_lid = torch.floor(Tz_n).type(torch.long)
+            Tz_uid = torch.ceil(Tz_n).type(torch.long)
+
+            max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)), axis=1)
+            tgt_prob = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
+            
+            lvals = tgt_prob*(Tz_uid-Tz_n)
+            uvals = tgt_prob*(Tz_n-Tz_lid)
+            tgt_dist = torch.zeros(self.batch_size,self.atom_num).to(self.device).scatter_(1, Tz_lid, lvals.type(torch.float), reduce="add") \
+                       + torch.zeros(self.batch_size, self.atom_num).to(self.device).scatter_(1, Tz_uid, uvals.type(torch.float), reduce="add")
+
+        est_dist = self.online_net(state)[np.arange(0,self.batch_size),action]
 
         if self.memory_type == 'prioritized':
-            td_error = td_est - td_tgt
-            td_abs_error = np.abs(td_error.view(self.batch_size).to('cpu').detach().numpy().copy())
-            self.memory.update_priorities(self.sample_idx,td_abs_error)
-
             wei = np.power(np.reciprocal(np.array(self.sample_prob)),self.beta)
             wei = wei/np.amax(wei)
             wei = torch.FloatTensor(wei).to(self.device)
 
-            loss = self.loss_fn(td_est, td_tgt, wei)
+            ce_loss = self.loss_fn(tgt_dist, est_dist, wei)
+
+            new_priorities = ce_loss.to('cpu').detach().numpy().copy()
+            self.memory.update_priorities(self.sample_idx,new_priorities)
+
+            loss = torch.mean(ce_loss)
 
         else:
-            loss = self.loss_fn(td_est, td_tgt)
+            loss = torch.mean(self.loss_fn(tgt_dist, est_dist))
 
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        return loss.item(), td_est.mean().item()
+        q_est = self._convert_categorical_output_to_Qvalue(est_dist)
+
+        return loss.item(), q_est.mean().item()
 
 
     def sync_target_net(self):
@@ -171,9 +193,6 @@ class doubleDQN:
 
         if self.memory.get_size() < self.mem_size_min:
             return None, None
-
-        # if self.memory_type == "prioritized" and self.cur_step % self.sort_memory_every == 0:
-        #     self.memory.sort_memory()
 
         if self.cur_step % self.anneal_IS_every == 0:
             self.anneal_IS_beta()
@@ -225,7 +244,12 @@ class doubleDQN:
         if self.beta <= 1.0:
             self.beta += self.anneal_IS_step
         print("Aneal IS beta:{0}".format(self.beta))
-        # ratio = np.clip(ratio,0.0,1.0)
-        # self.beta = (1.0-self.beta_zero)*ratio + self.beta_zero
+
+
+    def _convert_categorical_output_to_Qvalue(self, output):
+        atoms = torch.tensor(self.atoms).type(torch.float).to(self.device)
+        qvals = torch.matmul(output,atoms)
+        return qvals
+
         
     

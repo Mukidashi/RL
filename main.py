@@ -16,7 +16,7 @@ def set_parser():
     parser.add_argument('proc_type',choices=['train','evaluate'],default='train')
     parser.add_argument('--env', choices=['cart','mario'], required=True)
     
-    parser.add_argument('--agent',choices=['DQN','doubleDQN','duelingDQN','noisyDuelDQN'],required=True)
+    parser.add_argument('--agent',choices=['DQN','doubleDQN','duelingDQN','noisyDuelDQN','categoricalDoubleDQN','rainbow'],required=True)
     parser.add_argument('--memory_size',type=int, default=100000)
     parser.add_argument('--memory_type', choices=['uniform','prioritized'], default='uniform')
     parser.add_argument('--batch_size',type=int, default=32)
@@ -24,6 +24,7 @@ def set_parser():
 
     parser.add_argument('--episode_num',type=int,default=40000)
     parser.add_argument('--save_dir',type=str, default="./checkpoints/{0}".format(datetime.datetime.now().strftime('%Y-%m-%dT%H-%M-%S')))
+    parser.add_argument('--checkpoint',type=str,default=None)
 
     return parser
 
@@ -48,6 +49,7 @@ import numpy as np
 import torch
 
 logger = Logger(args.save_dir)
+
 
 action_num = env.action_space.n
 episode_num = args.episode_num
@@ -80,5 +82,6 @@ for i in range(episode_num):
         logger.record(episode=i,
                       epsilon=agent.exploration_rate,
                       step=agent.cur_step)
+
 
 env.close()

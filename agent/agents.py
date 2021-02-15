@@ -1,6 +1,7 @@
 from .DQN import DQN
 from .doubleDQN import doubleDQN
 from .duelingDQN import duelingDQN
+from .categoricalDoubleDQN import categoricalDoubleDQN
 
 import os
 
@@ -14,6 +15,8 @@ def get_agent(args,env):
     loss_type = args.loss_type
     mem_type = args.memory_type
 
+    proc_type = args.proc_type
+
     save_dir = args.save_dir
     if not os.path.isdir(save_dir):
         os.makedirs(save_dir)
@@ -26,7 +29,8 @@ def get_agent(args,env):
     elif args.agent == "doubleDQN":
         
         agent = doubleDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
-                           memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type)
+                           memory_size=m_size, memory_type=mem_type, batch_size=b_size, 
+                           loss_type=loss_type, proc_type=proc_type)
 
     elif args.agent == "duelingDQN" or args.agent == "noisyDuelDQN":
 
@@ -36,6 +40,11 @@ def get_agent(args,env):
         
         agent = duelingDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
                            memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type,
-                           use_noisy=use_noisy) 
+                           use_noisy=use_noisy)
+
+    elif args.agent == "categoricalDoubleDQN":
+
+        agent = categoricalDoubleDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
+                                     memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type)
     
     return agent
