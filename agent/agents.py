@@ -24,7 +24,7 @@ def get_agent(args,env):
     agent = None
     if args.agent == "DQN":
         agent = DQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
-                    memory_size=m_size, batch_size=b_size, loss_type=loss_type)
+                    memory_size=m_size, batch_size=b_size, loss_type=loss_type, proc_type=proc_type)
 
     elif args.agent == "doubleDQN":
         
@@ -40,11 +40,12 @@ def get_agent(args,env):
         
         agent = duelingDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
                            memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type,
-                           use_noisy=use_noisy)
+                           use_noisy=use_noisy, proc_type=proc_type)
 
     elif args.agent == "categoricalDoubleDQN":
 
         agent = categoricalDoubleDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
-                                     memory_size=m_size, memory_type=mem_type, batch_size=b_size, loss_type=loss_type)
+                                     memory_size=m_size, memory_type=mem_type, batch_size=b_size, 
+                                     loss_type=loss_type, proc_type=proc_type)
     
     return agent

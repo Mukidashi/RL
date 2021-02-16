@@ -10,14 +10,11 @@ def CE_loss(x,y):
     loss = -x*torch.log(y+1.0e-8)
     return torch.sum(loss, 1)
 
-def weighted_CE_loss(x, y, w):
-    loss = -x*torch.log(y+1.0e-8)
-    return w*torch.sum(loss,1)
 
 class categoricalDoubleDQN:
 
-    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,memory_type='uniform',
-                 batch_size=32,loss_type="MSE"):
+    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000, memory_type='uniform',
+                 batch_size=32, loss_type="MSE", proc_type="train"):
         
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -35,7 +32,7 @@ class categoricalDoubleDQN:
             self.beta_zero = 0.4
             self.beta = self.beta_zero
             self.anneal_IS_every = 100000
-            self.anneal_IS_step = (1.0-self.beta_zero)/200.0
+            self.anneal_IS_step = (1.0-self.beta_zero)/100.0
 
 
         self.use_cuda = torch.cuda.is_available()
@@ -55,18 +52,18 @@ class categoricalDoubleDQN:
 
         self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=0.00025/4.0)
 
-
-        if memory_type == 'prioritized':
-            #for now, only one function is implemented for prioritized replay
-            self.loss_fn = weighted_CE_loss
-        else:
-            self.loss_fn = CE_loss
+        self.loss_fn = CE_loss
 
         
         self.exploration_rate = 1
         self.exploration_rate_step = 0.9/4500000.0
         self.exploration_rate_min = 0.1
         self.gamma = 0.9
+
+        self.proc_type = proc_type
+        if self.proc_type == "evaluate":
+            self.exploration_rate = 0.05
+            self.exploration_rate_min = 0.05
 
         self.learn_every = 3
         self.sync_every = 1e4
@@ -75,6 +72,7 @@ class categoricalDoubleDQN:
 
         self.save_every = 5e5
         self.save_dir = save_dir
+
 
 
     def act(self, state):
@@ -87,12 +85,11 @@ class categoricalDoubleDQN:
             action_values = self._convert_categorical_output_to_Qvalue(self.online_net(state))
             action_idx = torch.argmax(action_values,axis=1).item()
 
-        # self.exploration_rate *= self.exploration_rate_decay
-        self.exploration_rate -= self.exploration_rate_step
-        self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
-
         self.cur_step += 1
 
+        self.exploration_rate -= self.exploration_rate_step
+        self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
+        
         return action_idx
 
 
@@ -128,10 +125,6 @@ class categoricalDoubleDQN:
 
         
     def update(self, state, next_state, action, reward, done):
-
-        # td_dist = np.zeros(self.batch_size, self.atom_num)
-        # zsupp = np.array([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)])
-
         
         with torch.no_grad():
             #project updated support
@@ -157,12 +150,12 @@ class categoricalDoubleDQN:
             wei = wei/np.amax(wei)
             wei = torch.FloatTensor(wei).to(self.device)
 
-            ce_loss = self.loss_fn(tgt_dist, est_dist, wei)
+            ce_loss = self.loss_fn(tgt_dist, est_dist)
 
             new_priorities = ce_loss.to('cpu').detach().numpy().copy()
             self.memory.update_priorities(self.sample_idx,new_priorities)
 
-            loss = torch.mean(ce_loss)
+            loss = torch.mean(wei*ce_loss)
 
         else:
             loss = torch.mean(self.loss_fn(tgt_dist, est_dist))
@@ -173,6 +166,38 @@ class categoricalDoubleDQN:
         self.optimizer.step()
 
         q_est = self._convert_categorical_output_to_Qvalue(est_dist)
+
+        return loss.item(), q_est.mean().item()
+
+
+    @torch.no_grad()
+    def eval(self, state, next_state, action, reward, done):
+        
+        state = torch.FloatTensor(state).to(self.device)
+        state = state.unsqueeze(0)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        next_state = next_state.unsqueeze(0)
+        reward = torch.DoubleTensor([reward]).to(self.device)
+
+        zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
+        Tz = reward.view(-1,1).repeat(1,self.atom_num) + self.gamma*zsupp.view(1,-1)
+        Tz = torch.clip(Tz, self.Vmin, self.Vmax)
+        Tz_n = (Tz-self.Vmin)/float(self.deltaz)
+        Tz_lid = torch.floor(Tz_n).type(torch.long)
+        Tz_uid = torch.ceil(Tz_n).type(torch.long)
+
+        max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)),axis=1)
+        tgt_prob = self.target_net(next_state)[:,max_action_id].view(1,-1)
+
+        lvals = tgt_prob*(Tz_uid - Tz_n)
+        uvals = tgt_prob*(Tz_n - Tz_lid)
+        tgt_dist = torch.zeros(1, self.atom_num).to(self.device).scatter_(1, Tz_lid, lvals.type(torch.float), reduce="add") \
+                    + torch.zeros(1, self.atom_num).to(self.device).scatter_(1, Tz_uid, uvals.type(torch.float), reduce="add")
+
+        est_dist = self.online_net(state)[:, action]
+        q_est = self._convert_categorical_output_to_Qvalue(est_dist)
+
+        loss = torch.mean(self.loss_fn(tgt_dist, est_dist))
 
         return loss.item(), q_est.mean().item()
 
@@ -234,10 +259,12 @@ class categoricalDoubleDQN:
 
         self.online_net.load_state_dict(online_net)
         self.target_net.load_state_dict(online_net)
-        self.exploartion_rate = exploration_rate
         self.beta = is_beta
 
-        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
+        if self.proc_type == "train":
+            self.exploartion_rate = exploration_rate
+
+        print(f"Loading model at {load_path} with exploration rate {self.exploration_rate}")
 
 
     def anneal_IS_beta(self):

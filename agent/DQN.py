@@ -7,7 +7,8 @@ from network import MarioNet
 
 class DQN:
 
-    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,batch_size=32,loss_type="MSE"):
+    def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,batch_size=32,loss_type="MSE",proc_type="train"):
+        
         self.state_dim = state_dim
         self.action_dim = action_dim
 
@@ -42,6 +43,11 @@ class DQN:
         self.save_every = 5e5
         self.save_dir = save_dir
 
+        self.proc_type = proc_type
+        if proc_type == "evaluate":
+            self.exploration_rate = 0.05
+            self.exploration_rate_min = 0.05
+
 
     def act(self, state):
 
@@ -53,11 +59,11 @@ class DQN:
             action_values = self.online_net(state)
             action_idx = torch.argmax(action_values,axis=1).item()
 
-        self.exploration_rate *= self.exploration_rate_decay
-        self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
-
         self.cur_step += 1
 
+        self.exploration_rate *= self.exploration_rate_decay
+        self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
+            
         return action_idx
 
 
@@ -86,7 +92,7 @@ class DQN:
 
         
     def update(self, state, next_state, action, reward, done):
-        
+
         td_est = self.online_net(state)[np.arange(0, self.batch_size), action]
 
         with torch.no_grad():
@@ -99,6 +105,25 @@ class DQN:
         loss.backward()
         self.optimizer.step()
 
+        return loss.item(), td_est.mean().item()
+
+    
+    def eval(self, state, next_state, action, reward, done):
+
+        state = torch.FloatTensor(state).to(self.device)
+        state = state.unsqueeze(0)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        next_state = next_state.unsqueeze(0)
+
+        with torch.no_grad():
+            td_est = self.online_net(state)[:, action]
+
+            next_state_value = torch.max(self.target_net(next_state), 1)[0]
+            # next_state_value = torch.max(self.online_net(next_state),1)[0]
+            td_tgt = (reward + (1.0 - float(done))*self.gamma*next_state_value).float()
+
+            loss = self.loss_fn(td_est, td_tgt)
+        
         return loss.item(), td_est.mean().item()
 
 
@@ -157,7 +182,9 @@ class DQN:
         self.online_net.load_state_dict(online_net)
         # self.target_net.load_state_dict(target_net)
         self.target_net.load_state_dict(online_net)
-        self.exploartion_rate = exploration_rate
 
-        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
+        if self.proc_type == "train":
+            self.exploartion_rate = exploration_rate
+
+        print(f"Loading model at {load_path} with exploration rate {self.exploration_rate}")
     

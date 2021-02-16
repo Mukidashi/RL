@@ -13,7 +13,7 @@ def weighted_MSE_Loss(x,y,w):
 class duelingDQN:
 
     def __init__(self, state_dim, action_dim, save_dir, memory_size=100000,memory_type='uniform',
-                 batch_size=32, loss_type="MSE", use_noisy=False):
+                 batch_size=32, loss_type="MSE", use_noisy=False, proc_type="train"):
         
         self.state_dim = state_dim
         self.action_dim = action_dim
@@ -54,7 +54,7 @@ class duelingDQN:
         else:
             self.loss_fn = torch.nn.MSELoss()
 
-        if memory_type == 'prioritized':
+        if memory_type == 'prioritized' and proc_type == "train":
             #for now, only one function is implemented for prioritized replay
             self.loss_fn = weighted_MSE_Loss
 
@@ -64,6 +64,11 @@ class duelingDQN:
         self.exploration_rate_step = 0.9/4500000.0
         self.exploration_rate_min = 0.1
         self.gamma = 0.9
+
+        self.proc_type = proc_type
+        if self.proc_type == "evaluate":
+            self.exploration_rate = 0.05
+            self.exploration_min = 0.05
 
         if self.use_noisy:
             self.exploration_rate = -1
@@ -91,7 +96,7 @@ class duelingDQN:
             action_values = self._convert_duel_output_to_Qvalue(self.online_net(state))
             action_idx = torch.argmax(action_values,axis=1).item()
 
-        if not self.use_noisy:
+        if not self.use_noisy and self.proc_type == "train":
             # self.exploration_rate *= self.exploration_rate_decay
             self.exploration_rate -= self.exploration_rate_step
             self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
@@ -175,6 +180,34 @@ class duelingDQN:
         return loss.item(), td_est.mean().item()
 
 
+    def eval(self, state, next_state, action, reward, done):
+        
+        with torch.no_grad():
+            state = torch.FloatTensor(state).to(self.device)
+            state = state.unsqueeze(0)
+            next_state = torch.FloatTensor(next_state).to(self.device)
+            next_state = next_state.unsqueeze(0)
+
+            if self.use_noisy:
+                self.online_net.sample_noise()
+                self.target_net.sample_noise()
+
+            q_next_est = self._convert_duel_output_to_Qvalue(self.online_net(next_state))
+            max_action_id = torch.argmax(q_next_est, axis=1)
+            q_next_tgt = self._convert_duel_output_to_Qvalue(self.target_net(next_state))
+            next_state_value = q_next_tgt[:,max_action_id]
+            td_tgt = (reward + (1.0 - float(done))*self.gamma*next_state_value).float()
+
+            if self.use_noisy:
+                self.online_net.sample_noise()
+            q_est = self._convert_duel_output_to_Qvalue(self.online_net(state))
+            td_est = q_est[:, action]
+
+            loss = self.loss_fn(td_est, td_tgt)
+
+        return loss.item(), td_est.mean().item()
+
+
     def sync_target_net(self):
         self.target_net.load_state_dict(self.online_net.state_dict())
 
@@ -235,10 +268,12 @@ class duelingDQN:
 
         self.online_net.load_state_dict(online_net)
         self.target_net.load_state_dict(online_net)
-        self.exploartion_rate = exploration_rate
         self.beta = is_beta
 
-        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
+        if self.proc_type == "train":
+            self.exploartion_rate = exploration_rate
+
+        print(f"Loading model at {load_path} with exploration rate {self.exploration_rate}")
 
 
     def anneal_IS_beta(self):

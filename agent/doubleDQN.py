@@ -61,6 +61,7 @@ class doubleDQN:
         self.exploration_rate_min = 0.1
         self.gamma = 0.9
 
+        self.proc_type = proc_type
         if proc_type == "evaluate":
             self.exploration_rate = 0.05
             self.exploration_rate_min = 0.05
@@ -84,11 +85,12 @@ class doubleDQN:
             action_values = self.online_net(state)
             action_idx = torch.argmax(action_values,axis=1).item()
 
+        self.cur_step += 1
+
+
         # self.exploration_rate *= self.exploration_rate_decay
         self.exploration_rate -= self.exploration_rate_step
         self.exploration_rate = max(self.exploration_rate_min,self.exploration_rate)
-
-        self.cur_step += 1
 
         return action_idx
 
@@ -154,6 +156,25 @@ class doubleDQN:
 
         return loss.item(), td_est.mean().item()
 
+    
+    def eval(self, state, next_state, action, reward, done):
+
+        with torch.no_grad():
+            state = torch.FloatTensor(state).to(self.device)
+            state = state.unsqueeze(0)
+            next_state = torch.FloatTensor(next_state).to(self.device)
+            next_state = next_state.unsqueeze(0)
+
+            td_est = self.online_net(state)[:, action]
+
+            max_action_id = torch.argmax(self.online_net(next_state), axis=1)
+            next_state_value = self.target_net(next_state)[:,max_action_id]
+            td_tgt = (reward + (1.0 - float(done))*self.gamma*next_state_value).float()
+
+            loss = self.loss_fn(td_est, td_tgt)
+        
+        return loss.item(), td_est.mean().item()
+
 
     def sync_target_net(self):
         self.target_net.load_state_dict(self.online_net.state_dict())
@@ -215,10 +236,12 @@ class doubleDQN:
 
         self.online_net.load_state_dict(online_net)
         self.target_net.load_state_dict(online_net)
-        self.exploartion_rate = exploration_rate
         self.beta = is_beta
 
-        print(f"Loading model at {load_path} with exploration rate {exploration_rate}")
+        if self.proc_type == "train":
+            self.exploartion_rate = exploration_rate
+
+        print(f"Loading model at {load_path} with exploration rate {self.exploration_rate}")
 
 
     def anneal_IS_beta(self):
