@@ -108,7 +108,7 @@ class DQN:
         return loss.item(), td_est.mean().item()
 
     
-    def eval(self, state, next_state, action, reward, done):
+    def eval(self, state, next_state, action, reward, done, is_end):
 
         state = torch.FloatTensor(state).to(self.device)
         state = state.unsqueeze(0)
@@ -131,7 +131,7 @@ class DQN:
         self.target_net.load_state_dict(self.online_net.state_dict())
 
 
-    def observe(self,state,next_state,action,reward,done):
+    def observe(self, state, next_state, action, reward, done, is_end):
         
         self.memorize(state,next_state,action,reward,done)
 

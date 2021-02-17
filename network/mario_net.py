@@ -157,3 +157,58 @@ class MarioCategoricalNet(nn.Module):
         x = F.relu(self.linear1(torch.flatten(x,start_dim=1)))
         x = self.linear2(x)
         return self.softfn(x.view(-1,self.action_dim,self.atom_num))
+
+
+class MarioRainbowNet(nn.Module):
+
+    def __init__(self, input_dim, action_dim, atom_num):
+        super().__init__()
+
+        self.action_dim = action_dim
+        self.atom_num = atom_num
+
+        c,h,w = input_dim
+
+        self.conv1 = nn.Conv2d(c, 32, kernel_size=8, stride=4)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(64)
+        
+        convw = conv2d_size_out(conv2d_size_out(conv2d_size_out(w,8,4),4,2),3,1)
+        convh = conv2d_size_out(conv2d_size_out(conv2d_size_out(h,8,4),4,2),3,1)
+        lsize = convw*convh*64
+
+        self.fc1_a = NoisyFCLayer(lsize, 512)
+        self.fc2_a = NoisyFCLayer(512, action_dim*atom_num)
+        self.fc1_v = NoisyFCLayer(lsize, 512)
+        self.fc2_v = NoisyFCLayer(512, atom_num)
+
+        self.softfn = nn.Softmax(dim=2)
+
+
+    def forward(self, x):
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+
+        x = torch.flatten(x, start_dim=1)
+        xa = F.relu(self.fc1_a(x))
+        xa = self.fc2_a(xa)
+        xv = F.relu(self.fc1_v(x))
+        xv = self.fc2_v(xv)
+
+        xa = xa.view(-1,self.action_dim,self.atom_num)
+        xa_avg = torch.mean(xa,1,True).repeat(1, self.action_dim, 1)
+        rd = xv.view(-1,1,self.atom_num).repeat(1, self.action_dim, 1) + xa - xa_avg
+
+        return self.softfn(rd)
+
+
+    def sample_noise(self):
+        self.fc1_a.sample_noise()
+        self.fc2_a.sample_noise()
+        self.fc1_v.sample_noise()
+        self.fc2_v.sample_noise()
+

@@ -178,7 +178,6 @@ class EvalLogger():
         
         with open(self.eval_dir, "a") as f:
             f.write("\nSummary\n")
-            scc_str = f"{success_rate}({self.success_count}/{self.epi_count})"
             f.write(f"{mean_ep_loss:15.3f} {mean_ep_reward:15.3f} {mean_ep_q:15.3f}"
                     f" {mean_ep_length:15.3f} {mean_ep_time:15.3f} {success_rate:15.3f}({self.success_count}/{self.epi_count})\n")
 

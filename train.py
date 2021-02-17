@@ -26,7 +26,9 @@ class Train():
 
                 next_state, reward, done, info = self.env.step(action)
 
-                loss, qval = self.agent.observe(state, next_state, action, reward, done)
+                is_end = self.env.is_end(done,info)
+
+                loss, qval = self.agent.observe(state, next_state, action, reward, done, is_end)
 
                 screen = self.env.render()
 
@@ -34,7 +36,7 @@ class Train():
 
                 logger.log_step(reward, loss, qval)
 
-                if done or info['flag_get']:
+                if is_end:
                     break
             
             logger.log_episode()

@@ -2,6 +2,7 @@ from .DQN import DQN
 from .doubleDQN import doubleDQN
 from .duelingDQN import duelingDQN
 from .categoricalDoubleDQN import categoricalDoubleDQN
+from .Rainbow import Rainbow
 
 import os
 
@@ -45,7 +46,11 @@ def get_agent(args,env):
     elif args.agent == "categoricalDoubleDQN":
 
         agent = categoricalDoubleDQN(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir,
-                                     memory_size=m_size, memory_type=mem_type, batch_size=b_size, 
-                                     loss_type=loss_type, proc_type=proc_type)
+                                     memory_size=m_size, memory_type=mem_type, batch_size=b_size, proc_type=proc_type)
     
+    elif args.agent == "Rainbow":
+
+        agent = Rainbow(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir, 
+                        memory_size=m_size, batch_size=b_size, proc_type=proc_type)
+
     return agent

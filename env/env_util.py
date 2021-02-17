@@ -36,3 +36,11 @@ class SkipFrame(gym.Wrapper):
             if done:
                 break
         return obs, total_reward, done, info
+
+
+class AddEndChecker(gym.Wrapper):
+    def __init__(self,env):
+        super().__init__(env)
+
+    def is_end(self,done,info):
+        return done or info['flag_get']

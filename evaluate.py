@@ -1,5 +1,9 @@
 import numpy as np
 import torch
+import os
+
+from PIL import Image
+import cv2
 
 from logger import EvalLogger
 
@@ -12,6 +16,8 @@ class Evaluate():
         self.save_dir = args.save_dir
 
         self.episode_num = args.eval_episode_num
+        
+        self.eval_record = args.eval_record
 
         if args.checkpoint:
             self.agent.load(args.checkpoint)
@@ -22,10 +28,21 @@ class Evaluate():
     def process(self):
         self.env.reset()
 
-        logger = EvalLogger(self.save_dir)
-
+        if not self.eval_record:
+            logger = EvalLogger(self.save_dir)
+        else:
+            img_shape = np.array(self.env.render(mode='rgb_array')).shape
+            codec = cv2.VideoWriter_fourcc(*'mp4v')
+        
         for i in range(self.episode_num):
             state = self.env.reset()
+
+            if self.eval_record:
+                video = cv2.VideoWriter(os.path.join(self.save_dir,"{0:03d}.mp4".format(i)),codec, 30.0, (img_shape[1],img_shape[0]))
+
+            # screen = self.env.render(mode='rgb_array')[:,:,[2,1,0]]
+            # img = Image.fromarray(screen)
+            # img.save(os.path.join(self.save_dir,"{0:3d}.jpg".format(i)))
 
             success = False
             while True:
@@ -33,22 +50,31 @@ class Evaluate():
 
                 next_state, reward, done, info = self.env.step(action)
 
-                loss, qval = self.agent.eval(state, next_state, action, reward, done)
+                is_end = self.env.is_end(done,info)
 
-                screen = self.env.render()
-
+                loss, qval = self.agent.eval(state, next_state, action, reward, done, info)
                 state = next_state
 
-                logger.log_step(reward, loss, qval)
+                if not self.eval_record:
+                    screen = self.env.render()
+                    logger.log_step(reward, loss, qval)
+                else:
+                    screen = self.env.render(mode='rgb_array')[:,:,[2,1,0]]
+                    video.write(screen)
+
 
                 if info['flag_get']:
                     success = True
 
-                if done or info['flag_get']:
+                if is_end:
                     break
             
-            logger.log_episode(i, success)
+            if not self.eval_record:
+                logger.log_episode(i, success)
+            else:
+                video.release()
 
-        logger.output_eval()
+        if not self.eval_record:
+            logger.output_eval()
 
         self.env.close()

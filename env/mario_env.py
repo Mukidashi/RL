@@ -7,7 +7,7 @@ from nes_py.wrappers import JoypadSpace
 
 import numpy as np
 
-from env.env_util import SkipFrame, ResizeObservation
+from env.env_util import SkipFrame, ResizeObservation, AddEndChecker
 
 
 
@@ -27,6 +27,7 @@ class MarioEnv():
         env = ResizeObservation(env,shape=self.img_shape)
         env = TransformObservation(env, f=lambda x:x/255.)
         env = FrameStack(env,num_stack=self.stackN)
+        env = AddEndChecker(env)
         
         env.observation_space.low = np.zeros_like(env.observation_space.low)
         env.observation_space.high = np.zeros_like(env.observation_space.high) + 1.0
