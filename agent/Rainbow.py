@@ -130,6 +130,7 @@ class Rainbow:
 
             zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
             Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0 - done.float().view(-1,1))*self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size,1)
+            # Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size, 1)
             Tz = torch.clip(Tz, self.Vmin, self.Vmax)
             Tz_n = (Tz-self.Vmin)/float(self.deltaz)
             Tz_lid = torch.floor(Tz_n).type(torch.long)
@@ -180,6 +181,7 @@ class Rainbow:
 
         zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
         Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0-float(done))*self.gamma*zsupp.view(1,-1)
+        # Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.gamma*zsupp.view(1, -1)
         Tz = torch.clip(Tz, self.Vmin, self.Vmax)
         Tz_n = (Tz-self.Vmin)/float(self.deltaz)
         Tz_lid = torch.floor(Tz_n).type(torch.long)
@@ -216,6 +218,9 @@ class Rainbow:
             self.exp_stack = [None]*self.multi_step_num
             self.reward_stack = np.zeros(self.multi_step_num)
             self.multi_step_idx = 0
+
+        if self.cur_step % self.sync_every == 0:
+            self.sync_target_net()
 
         if self.cur_step % self.save_every == 0:
             self.save()
