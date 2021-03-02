@@ -7,7 +7,21 @@ from nes_py.wrappers import JoypadSpace
 
 import numpy as np
 
-from env.env_util import SkipFrame, ResizeObservation, AddEndChecker
+from env.env_util import SkipFrame, ResizeObservation
+
+
+class AddCallbackFuncs(gym.Wrapper):
+    def __init__(self,env):
+        super().__init__(env)
+
+    def is_end(self,done,info):
+        return done or info['flag_get']
+
+    def get_action_dim(self):
+        return self.action_space.n 
+    
+    def get_state_dim(self):
+        return self.observation_space.shape
 
 
 
@@ -27,7 +41,7 @@ class MarioEnv():
         env = ResizeObservation(env,shape=self.img_shape)
         env = TransformObservation(env, f=lambda x:x/255.)
         env = FrameStack(env,num_stack=self.stackN)
-        env = AddEndChecker(env)
+        env = AddCallbackFuncs(env)
         
         env.observation_space.low = np.zeros_like(env.observation_space.low)
         env.observation_space.high = np.zeros_like(env.observation_space.high) + 1.0

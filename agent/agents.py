@@ -3,14 +3,15 @@ from .doubleDQN import doubleDQN
 from .duelingDQN import duelingDQN
 from .categoricalDoubleDQN import categoricalDoubleDQN
 from .Rainbow import Rainbow
+from .SAC import SAC
 
 import os
 
 
 def get_agent(args,env):
 
-    s_dim = env.observation_space.shape
-    a_dim = env.action_space.n
+    s_dim = env.get_state_dim()
+    a_dim = env.get_action_dim()
     m_size = args.memory_size
     b_size = args.batch_size
     loss_type = args.loss_type
@@ -52,5 +53,9 @@ def get_agent(args,env):
 
         agent = Rainbow(state_dim=s_dim, action_dim=a_dim, save_dir=save_dir, 
                         memory_size=m_size, batch_size=b_size, proc_type=proc_type)
+
+    elif args.agent == "SAC":
+        agent = SAC(state_dim=s_dim, action_dim=a_dim, action_bound=env.get_action_bound(), save_dir=save_dir,
+                    memory_size=m_size, batch_size=b_size, proc_type=proc_type)
 
     return agent

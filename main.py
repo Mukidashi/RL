@@ -13,9 +13,9 @@ def set_parser():
     parser = argparse.ArgumentParser()
     
     parser.add_argument('proc_type',choices=['train','evaluate'],default='train')
-    parser.add_argument('--env', choices=['cart','mario'], required=True)
+    parser.add_argument('--env', choices=['cart','mario','bipedal_walker'], required=True)
     
-    parser.add_argument('--agent',choices=['DQN','doubleDQN','duelingDQN','noisyDuelDQN','categoricalDoubleDQN','Rainbow'],required=True)
+    parser.add_argument('--agent',choices=['DQN','doubleDQN','duelingDQN','noisyDuelDQN','categoricalDoubleDQN','Rainbow','SAC'],required=True)
     parser.add_argument('--memory_size',type=int, default=100000)
     parser.add_argument('--memory_type', choices=['uniform','prioritized'], default='uniform')
     parser.add_argument('--batch_size',type=int, default=32)

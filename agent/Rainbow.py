@@ -7,7 +7,7 @@ from memory import ReplayMemory, PrioritizedReplayMemoryProportional
 from network import MarioRainbowNet
 
 def CE_loss(x,y):
-    loss = -x*torch.log(y+1.0e-8)
+    loss = -x*torch.log(y+1.0e-16)
     return torch.sum(loss, 1)
 
 class Rainbow:
@@ -35,7 +35,7 @@ class Rainbow:
         self.online_net = MarioRainbowNet(state_dim, action_dim, self.atom_num).to(self.device)
         self.target_net = MarioRainbowNet(state_dim, action_dim, self.atom_num).to(self.device)
         self.target_net.load_state_dict(self.online_net.state_dict())
-        self.Vmin = 0.0
+        self.Vmin = -50.0
         self.Vmax = 100.0
         self.atoms = np.zeros(self.atom_num)
         self.deltaz = (self.Vmax - self.Vmin)/float(self.atom_num-1)
@@ -128,16 +128,19 @@ class Rainbow:
             self.online_net.sample_noise()
             self.target_net.sample_noise()
 
+            max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)), axis=1)
+            tgt_prob = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
+
+            tgt_q = self._convert_categorical_output_to_Qvalue(tgt_prob)
+
             zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
-            Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0 - done.float().view(-1,1))*self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size,1)
+            # Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0 - done.float().view(-1,1))*self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size,1)
             # Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size, 1)
+            Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.n_gamma*zsupp.view(1,-1).repeat(self.batch_size, 1) - done.float().view(-1,1)*tgt_q.view(-1,1)
             Tz = torch.clip(Tz, self.Vmin, self.Vmax)
             Tz_n = (Tz-self.Vmin)/float(self.deltaz)
             Tz_lid = torch.floor(Tz_n).type(torch.long)
             Tz_uid = torch.ceil(Tz_n).type(torch.long)
-
-            max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)), axis=1)
-            tgt_prob = self.target_net(next_state)[np.arange(0,self.batch_size),max_action_id]
             
             lvals = tgt_prob*(Tz_uid-Tz_n)
             uvals = tgt_prob*(Tz_n-Tz_lid)
@@ -179,16 +182,20 @@ class Rainbow:
         self.online_net.sample_noise()
         self.target_net.sample_noise()
 
+        max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)),axis=1)
+        tgt_prob = self.target_net(next_state)[:,max_action_id].view(1,-1)
+
+        tgt_q = self._convert_categorical_output_to_Qvalue(tgt_prob)
+
         zsupp = torch.tensor([self.Vmin + float(i)*self.deltaz for i in range(self.atom_num)]).to(self.device)
-        Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0-float(done))*self.gamma*zsupp.view(1,-1)
+        # Tz = reward.view(-1,1).repeat(1,self.atom_num) + (1.0-float(done))*self.gamma*zsupp.view(1,-1)
         # Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.gamma*zsupp.view(1, -1)
+        Tz = reward.view(-1, 1).repeat(1, self.atom_num) + self.gamma*zsupp.view(1, -1) - float(done)*tgt_q.view(-1,1)
         Tz = torch.clip(Tz, self.Vmin, self.Vmax)
         Tz_n = (Tz-self.Vmin)/float(self.deltaz)
         Tz_lid = torch.floor(Tz_n).type(torch.long)
         Tz_uid = torch.ceil(Tz_n).type(torch.long)
 
-        max_action_id = torch.argmax(self._convert_categorical_output_to_Qvalue(self.online_net(next_state)),axis=1)
-        tgt_prob = self.target_net(next_state)[:,max_action_id].view(1,-1)
 
         lvals = tgt_prob*(Tz_uid - Tz_n)
         uvals = tgt_prob*(Tz_n - Tz_lid)
