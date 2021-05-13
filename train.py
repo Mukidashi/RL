@@ -1,22 +1,29 @@
 import numpy as np
 import torch
 
-from logger import Logger
+from logger import Logger, SACLogger
 
 class Train():
     
     def __init__(self, env, agent, args):
         self.env = env
         self.agent = agent
+        self.agent_name = args.agent
 
         self.save_dir = args.save_dir
 
         self.episode_num = args.episode_num
 
+        if args.checkpoint:
+            self.agent.load(args.checkpoint)
+
     def process(self):
         self.env.reset()
 
-        logger = Logger(self.save_dir)
+        if self.agent_name != "SAC":
+            logger = Logger(self.save_dir)
+        else:
+            logger = SACLogger(self.save_dir)
 
         for i in range(self.episode_num):
             state = self.env.reset()
@@ -28,13 +35,13 @@ class Train():
 
                 is_end = self.env.is_end(done,info)
 
-                loss, qval = self.agent.observe(state, next_state, action, reward, done, is_end)
+                outs = self.agent.observe(state, next_state, action, reward, done, is_end)
 
                 screen = self.env.render()
 
                 state = next_state
 
-                logger.log_step(reward, loss, qval)
+                logger.log_step(reward, outs)
 
                 if is_end:
                     break
@@ -42,9 +49,7 @@ class Train():
             logger.log_episode()
 
             if i%20 == 0:
-                logger.record(episode = i,
-                              epsilon = self.agent.exploration_rate,
-                              step = self.agent.cur_step)
+                logger.record(i, self.agent.exploration_rate, self.agent.cur_step)
 
         self.env.close()
         

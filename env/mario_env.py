@@ -17,6 +17,9 @@ class AddCallbackFuncs(gym.Wrapper):
     def is_end(self,done,info):
         return done or info['flag_get']
 
+    def is_success(self, info):
+        return info['flag_get']
+
     def get_action_dim(self):
         return self.action_space.n 
     

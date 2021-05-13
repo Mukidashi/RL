@@ -5,13 +5,14 @@ import os
 from PIL import Image
 import cv2
 
-from logger import EvalLogger
+from logger import EvalLogger, SACEvalLogger
 
 class Evaluate():
     
     def __init__(self, env, agent, args):
         self.env = env
         self.agent = agent
+        self.agent_name = args.agent
 
         self.save_dir = args.save_dir
 
@@ -29,7 +30,10 @@ class Evaluate():
         self.env.reset()
 
         if not self.eval_record:
-            logger = EvalLogger(self.save_dir)
+            if self.agent_name != "SAC":
+                logger = EvalLogger(self.save_dir)
+            else:
+                logger = SACEvalLogger(self.save_dir)
         else:
             img_shape = np.array(self.env.render(mode='rgb_array')).shape
             codec = cv2.VideoWriter_fourcc(*'mp4v')
@@ -51,19 +55,20 @@ class Evaluate():
                 next_state, reward, done, info = self.env.step(action)
 
                 is_end = self.env.is_end(done,info)
+                is_success = self.env.is_success(info)
 
-                loss, qval = self.agent.eval(state, next_state, action, reward, done, info)
+                outs = self.agent.eval(state, next_state, action, reward, done, info)
                 state = next_state
 
                 if not self.eval_record:
                     screen = self.env.render()
-                    logger.log_step(reward, loss, qval)
+                    logger.log_step(reward, outs)
                 else:
                     screen = self.env.render(mode='rgb_array')[:,:,[2,1,0]]
                     video.write(screen)
 
 
-                if info['flag_get']:
+                if is_success:
                     success = True
 
                 if is_end:

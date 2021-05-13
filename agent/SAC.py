@@ -20,17 +20,18 @@ class SAC:
         self.use_cuda = torch.cuda.is_available()
         self.device = torch.device("cuda" if self.use_cuda else "cpu")
 
+        lr_val = 3.0e-4
         self.online_qnet = BipedalTwinQNet(state_dim, action_dim).to(self.device)
         self.target_qnet = BipedalTwinQNet(state_dim, action_dim).to(self.device)
         self.target_qnet.load_state_dict(self.online_qnet.state_dict())
-        self.opt_q = torch.optim.Adam(self.online_qnet.parameters(), lr=0.0003)
+        self.opt_q = torch.optim.Adam(self.online_qnet.parameters(), lr=lr_val)
         self.qloss_fn = q_loss
 
-        self.policy_net = BipedalGaussianPolicyNet(state_dim, action_dim).to(self.device)
-        self.opt_pol = torch.optim.Adam(self.policy_net.parameters(), lr=0.0003)
+        self.policy_net = BipedalGaussianPolicyNet(state_dim, action_dim,action_bound).to(self.device)
+        self.opt_pol = torch.optim.Adam(self.policy_net.parameters(), lr=lr_val)
 
         self.log_alpha = torch.tensor([0.0],dtype=torch.float32,device=self.device,requires_grad=True)
-        self.opt_alp = torch.optim.Adam([self.log_alpha], lr=0.0003)
+        self.opt_alp = torch.optim.Adam([self.log_alpha], lr=lr_val)
 
 
         self.exploration_rate = -1
@@ -39,7 +40,7 @@ class SAC:
         self.target_entropy = -action_dim[0]
 
         self.cur_step = 0
-        self.learn_every = 1
+        self.learn_every = 4
         self.mem_size_min = memory_size/2
 
         self.save_every = 5e5
@@ -54,7 +55,10 @@ class SAC:
 
         self.cur_step += 1
 
-        return action.to('cpu').detach().numpy()
+        action = action.to('cpu').detach().numpy()
+        nan_mask = np.isnan(action)
+
+        return action
 
 
     def memorize(self, state, next_state, action, reward, done):
@@ -92,28 +96,28 @@ class SAC:
             next_action, next_logprob = self.policy_net(next_state)
             q1_tgt, q2_tgt = self.target_qnet(next_state, next_action)
             q_tgt = torch.minimum(q1_tgt, q2_tgt).squeeze()
-            next_logprob = torch.sum(next_logprob,1)
-            td1_tgt = reward + (1.0 - done.float())*self.gamma*(q_tgt - alpha*next_logprob)
-            td2_tgt = reward + (1.0 - done.float())*self.gamma*(q_tgt - alpha*next_logprob)
+            td_tgt = reward + (1.0 - done.float())*self.gamma*(q_tgt - alpha*next_logprob)
         
-        loss_q = 0.5*(self.qloss_fn(q1_est.squeeze(), td1_tgt) + self.qloss_fn(q2_est.squeeze(), td2_tgt))
+        loss_q = 0.5*(self.qloss_fn(q1_est.squeeze(), td_tgt) + self.qloss_fn(q2_est.squeeze(), td_tgt))
 
         self.opt_q.zero_grad()
-        loss_q.backward(retain_graph=True)
+        loss_q.backward()
         self.opt_q.step()
 
+
         #optimize policy net
-        action_est, logprob = self.policy_net(next_state)
-        logprob = torch.sum(logprob,1)
+        action_est, logprob = self.policy_net(state)
         q1_est, q2_est = self.online_qnet(state, action_est)
         q_est = torch.minimum(q1_est, q2_est).squeeze()
         loss_p = torch.mean(alpha*logprob - q_est)
 
         self.opt_pol.zero_grad()
-        loss_p.backward(retain_graph=True)
+        loss_p.backward()
         self.opt_pol.step()
 
+
         #optimize alpha
+        alpha = torch.exp(self.log_alpha)
         with torch.no_grad():
             entropy_diff = - logprob - self.target_entropy
         loss_a = torch.mean(alpha*entropy_diff)
@@ -125,11 +129,44 @@ class SAC:
         self.target_qnet.update_params(self.online_qnet.state_dict(), self.tau)
 
         loss = loss_q + loss_p + loss_a
-        return loss.item(), -1.0
+        return loss.item(), loss_q.item(), loss_p.item(), loss_a.item()
 
 
+    @torch.no_grad()
     def eval(self, state, next_state, action, reward, done, is_end):
-        pass
+        state = torch.FloatTensor(state).to(self.device)
+        state = state.unsqueeze(0)
+        next_state = torch.FloatTensor(next_state).to(self.device)
+        next_state = next_state.unsqueeze(0)
+        action = torch.FloatTensor(action).to(self.device)
+        action = action.unsqueeze(0)
+        reward = torch.DoubleTensor([reward]).to(self.device)
+
+        alpha = torch.exp(self.log_alpha)
+
+        #loss-Q
+        q1_est, q2_est = self.online_qnet(state, action)
+        next_action, next_logprob = self.policy_net(next_state)
+        q1_tgt, q2_tgt = self.target_qnet(next_state, next_action)
+        q_tgt = torch.minimum(q1_tgt, q2_tgt).squeeze()
+        td_tgt = reward + (1.0 - float(done))*self.gamma*(q_tgt - alpha*next_logprob)
+        
+        loss_q = 0.5*(self.qloss_fn(q1_est.squeeze(), td_tgt) + self.qloss_fn(q2_est.squeeze(), td_tgt))
+
+        #loss-P
+        action_est, logprob = self.policy_net(state)
+        q1_est, q2_est = self.online_qnet(state, action_est)
+        q_est = torch.minimum(q1_est, q2_est).squeeze()
+        loss_p = torch.mean(alpha*logprob - q_est)
+
+        #loss-A
+        alpha = torch.exp(self.log_alpha)
+        entropy_diff = - logprob - self.target_entropy
+        loss_a = torch.mean(alpha*entropy_diff)
+
+        loss = loss_q + loss_p + loss_a
+
+        return loss.item(), loss_q.item(), loss_p.item(), loss_a.item()
 
 
     def observe(self, state, next_state, action, reward, done, is_end):
@@ -148,9 +185,10 @@ class SAC:
         state, next_state, action, reward, done = self.recall()
 
 
-        loss_val, gomi = self.update(state, next_state, action, reward, done)
+        loss_val, loss_q, loss_p, loss_a = self.update(state, next_state, action, reward, done)
 
-        return loss_val,gomi
+
+        return loss_val, loss_q, loss_p, loss_a
 
 
     def save(self):
@@ -160,7 +198,8 @@ class SAC:
             dict(
                 online_qnet=self.online_qnet.state_dict(),
                 target_qnet=self.target_qnet.state_dict(),
-                policy_net=self.policy_net.state_dict()                
+                policy_net=self.policy_net.state_dict(),
+                log_alpha=self.log_alpha                
             ),
             save_path
         )
@@ -179,5 +218,6 @@ class SAC:
         self.online_qnet.load_state_dict(online_qnet)
         self.target_qnet.load_state_dict(target_qnet)
         self.policy_net.load_state_dict(policy_net)
+        self.log_alpha = ckp.get('log_alpha')
 
         print(f"Loading Model at {load_path}")

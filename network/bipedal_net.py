@@ -13,19 +13,26 @@ class BipedalTwinQNet(nn.Module):
         isize = state_dim[0] + action_dim[0]
         
         self.fc1_1 = nn.Linear(isize, 256)
-        self.fc2_1 = nn.Linear(256, 1)
+        self.fc2_1 = nn.Linear(256, 256)
+        self.fc3_1 = nn.Linear(256, 1)
         self.fc1_2 = nn.Linear(isize, 256)
-        self.fc2_2 = nn.Linear(256, 1)
+        self.fc2_2 = nn.Linear(256, 256)
+        self.fc3_2 = nn.Linear(256, 1)
 
     def forward(self, state, action):
         x = torch.cat((state,action),1)
         x1 = F.relu(self.fc1_1(x))
+        x1 = F.relu(self.fc2_1(x1))
         x2 = F.relu(self.fc1_2(x))
-        return self.fc2_1(x1), self.fc2_2(x2)
+        x2 = F.relu(self.fc2_2(x2))
+        return self.fc3_1(x1), self.fc3_2(x2)
 
     def update_params(self, online_state_dict, tau):
+        new_dict = {}
         for key in online_state_dict.keys():
-            self.state_dict()[key] = tau*online_state_dict[key] + (1.0-tau)*self.state_dict()[key]
+            update_weight = tau*online_state_dict[key] + (1.0-tau)*self.state_dict()[key]
+            new_dict[key] = update_weight    
+        self.load_state_dict(new_dict)
 
 
 class BipedalGaussianPolicyNet(nn.Module):
@@ -45,7 +52,7 @@ class BipedalGaussianPolicyNet(nn.Module):
             self.low_bound = action_bound[0]
             self.high_bound = action_bound[1]
             for i, (l,h) in enumerate(zip(self.low_bound,self.high_bound)):
-                if l == float('inf') or l == -float('inf') or h == float('inf') or -float('inf'):
+                if l == float('inf') or l == -float('inf') or h == float('inf') or h == -float('inf'):
                     self.low_bound[i] = 0.0
                     self.high_bound[i] = 0.0
                 else:
@@ -61,7 +68,8 @@ class BipedalGaussianPolicyNet(nn.Module):
         self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, 2*action_dim)
 
-        self.tanh_fn = nn.Tanh()
+        self.tanh_fn1 = nn.Tanh()
+        self.tanh_fn2 = nn.Tanh()
 
 
     def forward(self,x):
@@ -69,18 +77,18 @@ class BipedalGaussianPolicyNet(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
-        mu = x[:,:self.action_dim]
+        mu = self.tanh_fn1(x[:,:self.action_dim])
         sig = torch.exp(x[:,self.action_dim:])
 
         ep = torch.normal(0.0, 1.0, size=mu.shape).to(self.device)
         raw_action = mu + ep*sig
-        raw_action_tanh = self.tanh_fn(raw_action)
-        action = raw_action_tanh*(self.high_bound-self.low_bound) + self.low_bound
+        raw_action_tanh = self.tanh_fn2(raw_action)
+        action = (raw_action_tanh + 1.0)*(self.high_bound-self.low_bound)*0.5 + self.low_bound
         action = self.bound_mask*action + (1.0-self.bound_mask)*raw_action
 
-        logprob = -torch.square((raw_action-mu)/sig)/2.0
-        logprob -= torch.log(sig) + 0.5*np.log(2.0*np.pi)
-        logprob_correction = - torch.log(1.0-torch.square(raw_action_tanh) + 1.0e-16)
+        logprob = -torch.square((raw_action-mu)/sig)/2.0 - torch.log(sig) - 0.5*np.log(2.0*np.pi)
+        logprob_correction = - torch.log(1.0-torch.square(raw_action_tanh) + 1.0e-6)
         logprob = logprob + self.bound_mask*logprob_correction
+        logprob = torch.sum(logprob,1)
 
         return action, logprob

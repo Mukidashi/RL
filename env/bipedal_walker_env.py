@@ -7,6 +7,9 @@ class AddCallbackFuncs(gym.Wrapper):
 
     def is_end(self,done,info):
         return done
+    
+    def is_success(self, info):
+        return info["success"]
 
     def get_action_dim(self):
         return self.action_space.shape
